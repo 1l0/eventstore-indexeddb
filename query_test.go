@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fiatjaf/eventstore"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/sdk"
 )
@@ -47,7 +46,7 @@ func (db *DB) saveProfile(profile sdk.ProfileMetadata) (string, string, error) {
 	if err := evt.Sign(sk); err != nil {
 		return "", "", err
 	}
-	if err := db.SaveEvent(db.ctx, evt); err != nil && err != eventstore.ErrDupEvent {
+	if err := db.ReplaceEvent(db.ctx, evt); err != nil {
 		return "", "", err
 	}
 	return evt.ID, evt.PubKey, nil
@@ -70,7 +69,7 @@ func (db *DB) saveGroupMeta(id, name string) (string, string, error) {
 		logf("fail on sign")
 		return "", "", err
 	}
-	if err := db.SaveEvent(db.ctx, evt); err != nil && err != eventstore.ErrDupEvent {
+	if err := db.ReplaceEvent(db.ctx, evt); err != nil {
 		logf("fail on save")
 		return "", "", err
 	}

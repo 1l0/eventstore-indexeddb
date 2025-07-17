@@ -24,29 +24,6 @@ func (b *IndexeddbBackend) SaveEvent(ctx context.Context, evt *nostr.Event) erro
 		return nil
 	}
 
-	// since we only have replaceable or addressable, delete all of outdated events
-	ch, err := b.QueryEvents(ctx, nostr.Filter{
-		Kinds:   []int{evt.Kind},
-		Authors: []string{evt.PubKey},
-	})
-	if err != nil {
-		return err
-	}
-	outdatedIDs := make([]string, 0)
-	for e := range ch {
-		if evt.CreatedAt > e.CreatedAt {
-			outdatedIDs = append(outdatedIDs, e.ID)
-		}
-	}
-	for _, id := range outdatedIDs {
-		e := &nostr.Event{
-			ID: id,
-		}
-		if err := b.DeleteEvent(ctx, e); err != nil {
-			return err
-		}
-	}
-
 	tx, err := b.db.Transaction(idb.TransactionReadWrite, storeNameEvents)
 	if err != nil {
 		return err
