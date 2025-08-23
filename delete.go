@@ -6,12 +6,14 @@ import (
 	"context"
 	"syscall/js"
 
+	"fiatjaf.com/nostr"
 	"github.com/aperturerobotics/go-indexeddb/idb"
 	"github.com/hack-pad/safejs"
-	"github.com/nbd-wtf/go-nostr"
 )
 
-func (b *IndexeddbBackend) DeleteEvent(ctx context.Context, evt *nostr.Event) error {
+func (b *IndexeddbBackend) DeleteEvent(id nostr.ID) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	tx, err := b.db.Transaction(idb.TransactionReadWrite, storeNameEvents)
 	if err != nil {
 		return err
@@ -20,7 +22,7 @@ func (b *IndexeddbBackend) DeleteEvent(ctx context.Context, evt *nostr.Event) er
 	if err != nil {
 		return err
 	}
-	req, err := store.Delete(safejs.Safe(js.ValueOf(evt.ID)))
+	req, err := store.Delete(safejs.Safe(js.ValueOf(id.Hex())))
 	if err != nil {
 		return err
 	}

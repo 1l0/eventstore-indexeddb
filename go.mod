@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	fiatjaf.com/nostr v0.0.0-20250818235102-c8d5aa703fab // indirect
 	github.com/FastFilter/xorfilter v0.2.1 // indirect
 	github.com/ImVexed/fasturl v0.0.0-20230304231329-4e41488060f3 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect

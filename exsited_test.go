@@ -1,11 +1,13 @@
+//go:build js
+
 package indexeddb
 
 import (
 	"fmt"
 	"testing"
 
-	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/sdk"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/sdk"
 )
 
 func TestExisted(t *testing.T) {
@@ -24,8 +26,8 @@ func TestExisted(t *testing.T) {
 	if exsited := db.IsExisted(db.ctx, id); !exsited {
 		t.Fatal(fmt.Errorf("expected: true, actual: %t", exsited))
 	}
-	random := nostr.GeneratePrivateKey()
-	if exsited := db.IsExisted(db.ctx, random); exsited {
+	random := nostr.Generate()
+	if exsited := db.IsExisted(db.ctx, random.Hex()); exsited {
 		t.Fatal(fmt.Errorf("expected: false, actual: %t", exsited))
 	}
 }

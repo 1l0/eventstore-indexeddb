@@ -1,29 +1,27 @@
+//go:build js
+
 package indexeddb
 
 import (
-	"context"
 	"fmt"
 
+	"fiatjaf.com/nostr"
 	"github.com/fiatjaf/eventstore"
-	"github.com/nbd-wtf/go-nostr"
 )
 
-func (b *IndexeddbBackend) ReplaceEvent(ctx context.Context, evt *nostr.Event) error {
+func (b *IndexeddbBackend) ReplaceEvent(evt nostr.Event) error {
 
-	filter := nostr.Filter{Limit: 1, Kinds: []int{evt.Kind}, Authors: []string{evt.PubKey}}
-	if nostr.IsAddressableKind(evt.Kind) {
+	filter := nostr.Filter{Limit: 1, Kinds: []nostr.Kind{evt.Kind}, Authors: []nostr.PubKey{evt.PubKey}}
+	if evt.Kind.IsAddressable() {
 		filter.Tags = nostr.TagMap{"d": []string{evt.Tags.GetD()}}
 	}
 
-	ch, err := b.QueryEvents(ctx, filter)
-	if err != nil {
-		return fmt.Errorf("failed to query before replacing: %w", err)
-	}
+	itr := b.QueryEvents(filter, 1000)
 
 	shouldStore := true
-	for previous := range ch {
+	for previous := range itr {
 		if isOlder(previous, evt) {
-			if err := b.DeleteEvent(ctx, previous); err != nil {
+			if err := b.DeleteEvent(previous.ID); err != nil {
 				return fmt.Errorf("failed to delete event for replacing: %w", err)
 			}
 		} else {
@@ -32,7 +30,7 @@ func (b *IndexeddbBackend) ReplaceEvent(ctx context.Context, evt *nostr.Event) e
 	}
 
 	if shouldStore {
-		if err := b.SaveEvent(ctx, evt); err != nil && err != eventstore.ErrDupEvent {
+		if err := b.SaveEvent(evt); err != nil && err != eventstore.ErrDupEvent {
 			return fmt.Errorf("failed to save: %w", err)
 		}
 	}
@@ -40,7 +38,7 @@ func (b *IndexeddbBackend) ReplaceEvent(ctx context.Context, evt *nostr.Event) e
 	return nil
 }
 
-func isOlder(previous, next *nostr.Event) bool {
+func isOlder(previous, next nostr.Event) bool {
 	return previous.CreatedAt < next.CreatedAt ||
-		(previous.CreatedAt == next.CreatedAt && previous.ID > next.ID)
+		(previous.CreatedAt == next.CreatedAt && previous.ID.Hex() > next.ID.Hex())
 }

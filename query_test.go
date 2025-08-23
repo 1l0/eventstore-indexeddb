@@ -6,11 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
-	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/sdk"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/sdk"
 )
 
 type DB struct {
@@ -32,13 +33,13 @@ func newDB() (*DB, error) {
 }
 
 func (db *DB) saveProfile(profile sdk.ProfileMetadata) (string, string, error) {
-	sk := nostr.GeneratePrivateKey()
+	sk := nostr.Generate()
 
 	p, err := json.Marshal(profile)
 	if err != nil {
 		return "", "", err
 	}
-	evt := &nostr.Event{
+	evt := nostr.Event{
 		Kind:      nostr.KindProfileMetadata,
 		Content:   string(p),
 		CreatedAt: nostr.Now(),
@@ -46,16 +47,16 @@ func (db *DB) saveProfile(profile sdk.ProfileMetadata) (string, string, error) {
 	if err := evt.Sign(sk); err != nil {
 		return "", "", err
 	}
-	if err := db.ReplaceEvent(db.ctx, evt); err != nil {
+	if err := db.ReplaceEvent(evt); err != nil {
 		return "", "", err
 	}
-	return evt.ID, evt.PubKey, nil
+	return evt.ID.Hex(), evt.PubKey.Hex(), nil
 }
 
 func (db *DB) saveGroupMeta(id, name string) (string, string, error) {
-	sk := nostr.GeneratePrivateKey()
+	sk := nostr.Generate()
 
-	evt := &nostr.Event{
+	evt := nostr.Event{
 		Kind:      nostr.KindSimpleGroupMetadata,
 		CreatedAt: nostr.Now(),
 		Tags: nostr.Tags{
@@ -66,14 +67,14 @@ func (db *DB) saveGroupMeta(id, name string) (string, string, error) {
 		},
 	}
 	if err := evt.Sign(sk); err != nil {
-		logf("fail on sign")
+		slog.Warn("fail on sign")
 		return "", "", err
 	}
-	if err := db.ReplaceEvent(db.ctx, evt); err != nil {
-		logf("fail on save")
+	if err := db.ReplaceEvent(evt); err != nil {
+		slog.Warn("fail on save")
 		return "", "", err
 	}
-	return evt.ID, evt.PubKey, nil
+	return evt.ID.Hex(), evt.PubKey.Hex(), nil
 }
 
 func TestID(t *testing.T) {
@@ -90,16 +91,13 @@ func TestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	filter := nostr.Filter{
-		IDs: []string{id},
+		IDs: []nostr.ID{nostr.MustIDFromHex(id)},
 	}
-	ch, err := db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
+	itr := db.QueryEvents(filter, 1000)
 	count := 0
-	for evt := range ch {
+	for evt := range itr {
 		count++
-		if evt.ID != id {
+		if evt.ID.Hex() != id {
 			t.Fatalf("id mismatch expeected: %s, actual: %s", id, evt.ID)
 		}
 	}
@@ -129,15 +127,12 @@ func TestSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	filter := nostr.Filter{
-		Kinds:  []int{0},
+		Kinds:  []nostr.Kind{0},
 		Search: "jack",
 	}
-	ch, err := db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
+	itr := db.QueryEvents(filter, 1000)
 	count := 0
-	for evt := range ch {
+	for evt := range itr {
 		count++
 		meta, err := ParseMeta(evt)
 		if err != nil {
@@ -154,14 +149,11 @@ func TestSearch(t *testing.T) {
 		t.Fatal(fmt.Errorf("too many jacks"))
 	}
 	filter = nostr.Filter{
-		Kinds:  []int{0},
+		Kinds:  []nostr.Kind{0},
 		Search: "bob",
 	}
-	ch, err = db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for evt := range ch {
+	itr = db.QueryEvents(filter, 1000)
+	for evt := range itr {
 		count++
 		meta, err := ParseMeta(evt)
 		if err != nil {
@@ -193,16 +185,13 @@ func TestKindTagAuthor(t *testing.T) {
 	}
 
 	filter := nostr.Filter{
-		Kinds:   []int{nostr.KindSimpleGroupMetadata},
-		Authors: []string{pk},
+		Kinds:   []nostr.Kind{nostr.KindSimpleGroupMetadata},
+		Authors: []nostr.PubKey{nostr.MustPubKeyFromHex(pk)},
 		Tags:    nostr.TagMap{"d": []string{id}},
 	}
-	ch, err := db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
+	itr := db.QueryEvents(filter, 1000)
 	count := 0
-	for range ch {
+	for range itr {
 		count++
 	}
 	if count != 1 {
@@ -234,15 +223,12 @@ func TestKindAuthor(t *testing.T) {
 	}
 
 	filter := nostr.Filter{
-		Kinds:   []int{0},
-		Authors: []string{pk, pk2},
+		Kinds:   []nostr.Kind{0},
+		Authors: []nostr.PubKey{nostr.MustPubKeyFromHex(pk), nostr.MustPubKeyFromHex(pk2)},
 	}
-	ch, err := db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
+	itr := db.QueryEvents(filter, 1000)
 	count := 0
-	for range ch {
+	for range itr {
 		count++
 	}
 	if count != 2 {
@@ -270,27 +256,21 @@ func TestKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	filter := nostr.Filter{
-		Kinds: []int{0},
+		Kinds: []nostr.Kind{0},
 	}
-	ch, err := db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
+	itr := db.QueryEvents(filter, 1000)
 	count := 0
-	for range ch {
+	for range itr {
 		count++
 	}
 	if count != 2 {
 		t.Fatal(fmt.Errorf("count expect 2, actual: %d", count))
 	}
 	filter = nostr.Filter{
-		Kinds: []int{1},
+		Kinds: []nostr.Kind{1},
 	}
-	ch, err = db.QueryEvents(db.ctx, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range ch {
+	itr = db.QueryEvents(filter, 1000)
+	for range itr {
 		count++
 	}
 	if count != 2 {

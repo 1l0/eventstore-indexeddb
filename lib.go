@@ -4,12 +4,11 @@ package indexeddb
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"runtime"
-	"syscall/js"
 
+	"fiatjaf.com/nostr/eventstore"
 	"github.com/aperturerobotics/go-indexeddb/idb"
-	"github.com/fiatjaf/eventstore"
 	"github.com/hack-pad/safejs"
 )
 
@@ -118,11 +117,13 @@ func upgrade(db *idb.Database, oldVersion, newVersion uint) error {
 	return nil
 }
 
-func logf(format string, message ...any) {
-	js.Global().Get("console").Call("log", js.ValueOf(fmt.Sprintf(format, message...)))
+func logWarn(message string) {
+	_, f, l, _ := runtime.Caller(0)
+	slog.Error("warn", "file", f, "line", l, "message", message)
 }
 
 func logErr(err error) {
 	_, f, l, _ := runtime.Caller(0)
-	js.Global().Get("console").Call("error", js.ValueOf(fmt.Sprintf("%s %d: %s", f, l, err)))
+	slog.Error("error", "file", f, "line", l, "message", err)
+	// js.Global().Get("console").Call("error", js.ValueOf(fmt.Sprintf("%s %d: %s", f, l, err)))
 }

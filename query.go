@@ -4,53 +4,51 @@ package indexeddb
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"iter"
 	"slices"
 	"strconv"
 	"strings"
 
+	"fiatjaf.com/nostr"
 	"github.com/aperturerobotics/go-indexeddb/idb"
 	"github.com/hack-pad/safejs"
-	"github.com/nbd-wtf/go-nostr"
 )
 
-func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
-	ch := make(chan *nostr.Event)
-	tx, err := b.db.Transaction(idb.TransactionReadOnly, storeNameEvents)
-	if err != nil {
-		if err := tx.Abort(); err != nil {
-			logErr(err)
+func (b *IndexeddbBackend) QueryEvents(filter nostr.Filter, maxLimit int) iter.Seq[nostr.Event] {
+	ctx := context.Background()
+	return func(yield func(nostr.Event) bool) {
+		tx, err := b.db.Transaction(idb.TransactionReadOnly, storeNameEvents)
+		if err != nil {
+			if err := tx.Abort(); err != nil {
+				logErr(err)
+			}
+			return
 		}
-		close(ch)
-		return nil, err
-	}
-	store, err := tx.ObjectStore(storeNameEvents)
-	if err != nil {
-		if err := tx.Abort(); err != nil {
-			logErr(err)
+		store, err := tx.ObjectStore(storeNameEvents)
+		if err != nil {
+			if err := tx.Abort(); err != nil {
+				logErr(err)
+			}
+			return
 		}
-		close(ch)
-		return nil, err
-	}
-	if err := validateFilter(filter); err != nil {
-		if err := tx.Abort(); err != nil {
-			logErr(err)
+		if err := validateFilter(filter); err != nil {
+			if err := tx.Abort(); err != nil {
+				logErr(err)
+			}
+			return
 		}
-		close(ch)
-		return nil, err
-	}
 
-	go func() {
 		defer func() {
 			if err := tx.Await(ctx); err != nil {
 				logErr(err)
 			}
-			close(ch)
 		}()
 
 		if len(filter.IDs) > 0 {
 			for _, id_ := range filter.IDs {
-				id, err := safejs.ValueOf(id_)
+				id, err := safejs.ValueOf(id_.Hex())
 				if err != nil {
 					logErr(err)
 					return
@@ -61,7 +59,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 					return
 				}
 				rawEvt, err := req.Await(ctx)
-				if rawEvt.IsUndefined() || rawEvt.IsNull() {
+				if err != nil || rawEvt.IsUndefined() || rawEvt.IsNull() {
 					return
 				}
 				evt, err := valueToEvent(id, rawEvt)
@@ -69,7 +67,9 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 					logErr(err)
 					return
 				}
-				ch <- evt
+				if !yield(evt) {
+					return
+				}
 			}
 			return
 		}
@@ -82,12 +82,12 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 			}
 			if slices.Contains(filter.Kinds, nostr.KindProfileMetadata) {
 				search := strings.TrimSpace(filter.Search)
-				lower, err := safejs.ValueOf([]any{nostr.KindProfileMetadata, search})
+				lower, err := safejs.ValueOf([]any{nostr.KindProfileMetadata.Num(), search})
 				if err != nil {
 					logErr(err)
 					return
 				}
-				upper, err := safejs.ValueOf([]any{nostr.KindProfileMetadata, search + "\uffff"})
+				upper, err := safejs.ValueOf([]any{nostr.KindProfileMetadata.Num(), search + "\uffff"})
 				if err != nil {
 					logErr(err)
 					return
@@ -102,7 +102,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 					logErr(err)
 					return
 				}
-				if err := handleRequest(ctx, ch, req); err != nil {
+				if err := handleRequest(ctx, yield, req); err != nil {
 					logErr(err)
 					return
 				}
@@ -112,12 +112,12 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 				if !strings.HasPrefix(search, "wss://") && !strings.HasPrefix(search, "ws://") {
 					search = "wss://" + search
 				}
-				lower, err := safejs.ValueOf([]any{nostr.KindRecommendServer, search})
+				lower, err := safejs.ValueOf([]any{nostr.KindRecommendServer.Num(), search})
 				if err != nil {
 					logErr(err)
 					return
 				}
-				upper, err := safejs.ValueOf([]any{nostr.KindRecommendServer, search + "\uffff"})
+				upper, err := safejs.ValueOf([]any{nostr.KindRecommendServer.Num(), search + "\uffff"})
 				if err != nil {
 					logErr(err)
 					return
@@ -132,7 +132,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 					logErr(err)
 					return
 				}
-				if err := handleRequest(ctx, ch, req); err != nil {
+				if err := handleRequest(ctx, yield, req); err != nil {
 					logErr(err)
 					return
 				}
@@ -152,7 +152,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 				for tagSymbol, tags := range filter.Tags {
 					for _, tag := range tags {
 						if len(filter.Authors) < 1 {
-							kt := strconv.Itoa(kind) + tagSymbol + tag
+							kt := strconv.Itoa(int(kind)) + tagSymbol + tag
 							lower, err := safejs.ValueOf([]any{kt})
 							if err != nil {
 								logErr(err)
@@ -173,13 +173,13 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 								logErr(err)
 								return
 							}
-							if err := handleRequest(ctx, ch, req); err != nil {
+							if err := handleRequest(ctx, yield, req); err != nil {
 								logErr(err)
 								return
 							}
 						} else {
 							for _, author := range filter.Authors {
-								kta := strconv.Itoa(kind) + tagSymbol + tag + author
+								kta := strconv.Itoa(int(kind)) + tagSymbol + tag + author.Hex()
 								only, err := safejs.ValueOf(kta)
 								if err != nil {
 									logErr(err)
@@ -195,7 +195,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 									logErr(err)
 									return
 								}
-								if err := handleRequest(ctx, ch, req); err != nil {
+								if err := handleRequest(ctx, yield, req); err != nil {
 									logErr(err)
 									return
 								}
@@ -215,7 +215,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 			}
 			for _, kind := range filter.Kinds {
 				for _, author := range filter.Authors {
-					only, err := safejs.ValueOf([]any{kind, author})
+					only, err := safejs.ValueOf([]any{kind.Num(), author.Hex()})
 					if err != nil {
 						logErr(err)
 						return
@@ -230,7 +230,7 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 						logErr(err)
 						return
 					}
-					if err := handleRequest(ctx, ch, req); err != nil {
+					if err := handleRequest(ctx, yield, req); err != nil {
 						logErr(err)
 						return
 					}
@@ -247,12 +247,12 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 			}
 			for _, kind := range filter.Kinds {
 
-				lower, err := safejs.ValueOf([]any{kind})
+				lower, err := safejs.ValueOf([]any{kind.Num()})
 				if err != nil {
 					logErr(err)
 					return
 				}
-				upper, err := safejs.ValueOf([]any{kind, "\uffff"})
+				upper, err := safejs.ValueOf([]any{kind.Num(), "\uffff"})
 				if err != nil {
 					logErr(err)
 					return
@@ -267,19 +267,17 @@ func (b *IndexeddbBackend) QueryEvents(ctx context.Context, filter nostr.Filter)
 					logErr(err)
 					return
 				}
-				if err := handleRequest(ctx, ch, req); err != nil {
+				if err := handleRequest(ctx, yield, req); err != nil {
 					logErr(err)
 					return
 				}
 			}
 			return
 		}
-
-	}()
-	return ch, nil
+	}
 }
 
-func handleRequest(ctx context.Context, ch chan<- *nostr.Event, req *idb.CursorWithValueRequest) error {
+func handleRequest(ctx context.Context, yield func(nostr.Event) bool, req *idb.CursorWithValueRequest) error {
 	return req.Iter(ctx, func(cursor *idb.CursorWithValue) error {
 		id, err := cursor.PrimaryKey()
 		if err != nil {
@@ -296,72 +294,86 @@ func handleRequest(ctx context.Context, ch chan<- *nostr.Event, req *idb.CursorW
 		if err != nil {
 			return err
 		}
-		ch <- evt
+		if !yield(evt) {
+			return err
+		}
 		return nil
 	})
 }
 
-func valueToEvent(rawID, rawEvent safejs.Value) (*nostr.Event, error) {
+func valueToEvent(rawID, rawEvent safejs.Value) (nostr.Event, error) {
 	d, err := rawID.String()
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
+	}
+	id, err := nostr.IDFromHex(d)
+	if err != nil {
+		return nostr.Event{}, err
 	}
 	k_, err := rawEvent.Get(keyKind)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	k, err := k_.Int()
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	a_, err := rawEvent.Get(keyAuthor)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	a, err := a_.String()
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
+	}
+	pubkey, err := nostr.PubKeyFromHex(a)
+	if err != nil {
+		return nostr.Event{}, err
 	}
 	c_, err := rawEvent.Get(keyContent)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	c, err := c_.String()
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	ca_, err := rawEvent.Get(keyCreatedAt)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	ca, err := ca_.Int()
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	s_, err := rawEvent.Get(keySignature)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	s, err := s_.String()
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
+	}
+	sig, err := hex.DecodeString(s)
+	if err != nil {
+		return nostr.Event{}, err
 	}
 	t_, err := rawEvent.Get(keyTagArray)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
 	t, err := valueToTags(t_)
 	if err != nil {
-		return nil, err
+		return nostr.Event{}, err
 	}
-	return &nostr.Event{
-		ID:        d,
-		PubKey:    a,
+	return nostr.Event{
+		ID:        id,
+		PubKey:    pubkey,
 		CreatedAt: nostr.Timestamp(int64(ca)),
-		Kind:      k,
+		Kind:      nostr.Kind(k),
 		Tags:      t,
 		Content:   c,
-		Sig:       s,
+		Sig:       [64]byte(sig[:]),
 	}, nil
 }
 
