@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"fiatjaf.com/nostr"
-	"github.com/fiatjaf/eventstore"
+	"fiatjaf.com/nostr/eventstore"
 )
 
 func (b *IndexeddbBackend) ReplaceEvent(evt nostr.Event) error {
